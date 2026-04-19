@@ -135,83 +135,93 @@ PartitionBy(runs, Id)     // ordered groups, e.g. [1,1,2,2,1] → [[1,1,1],[2,2]
 
 ## result.go — Panic-on-failure monadic helper
 
-`Result` is designed for CLI tools and startup paths where certain failures have no
-sensible recovery action — a missing required environment variable, a database
-connection that must succeed, a NATS dial that is a hard dependency. Rather than
-threading errors through every call frame, you wrap the fallible operation in a
-`Result` and call a `Must*` method: if something went wrong the process panics with
-a clear, formatted message; if everything is fine you get the value and move on.
+Designed for CLI tools and startup paths where certain failures have no sensible
+recovery action — a missing required environment variable, a database connection
+that must succeed, a NATS dial that is a hard dependency. Rather than threading
+errors through every call frame, wrap the fallible operation and call a `Must*`
+method: the process panics with a clear, formatted message on failure, or you get
+the value and move on.
 
-```go
-type Result[T comparable] struct {
-    Value T
-    Error error
-}
-```
+Two types cover distinct cases:
 
-| Constructor | Description |
-|---|---|
-| `NewResult(v, err)` | Generic constructor |
-| `NewValueResult(v)` | Success result with nil error |
-| `NewErrorResult(err)` | Error result with zero value |
+| Type | Carries | Use when |
+|---|---|---|
+| `Result[T]` | value only | you already have the value; no error path |
+| `ResultE[T]` | value + error | wrapping a fallible operation |
+
+### Constructors
+
+| Constructor | Returns | Description |
+|---|---|---|
+| `ResultVal(v)` | `*Result[T]` | Wraps a plain value |
+| `ResultOf(v, err)` | `*ResultE[T]` | Wraps any `(T, error)` pair |
 
 ### Methods
 
+**`Result[T]`**
+
 ```go
-func (r *Result[T]) Unwrap() (T, error)
-func (r *Result[T]) Bind(f func(T) *Result[T]) *Result[T]
-func (r *Result[T]) MustPass(msg string, v ...any)
-func (r *Result[T]) MustGet(msg string, v ...any) T
-func (r *Result[T]) MustPresent(msg string, v ...any)
+func (r *Result[T]) Val() T
+func (r *Result[T]) MustPass(msg string, v ...any)    // when T is error: panics if non-nil
+func (r *Result[T]) MustPresent(msg string, v ...any) // panics if value is zero
 ```
 
-- **`Bind`** — chains operations; short-circuits on error, making it easy to compose multiple fallible steps before the final `Must*` call.
-- **`MustPass`** — panics with a formatted message if the result holds an error.
+**`ResultE[T]`**
+
+```go
+func (r *ResultE[T]) Val() T
+func (r *ResultE[T]) Err() error
+func (r *ResultE[T]) Unwrap() (T, error)
+func (r *ResultE[T]) Bind(f func(T) *ResultE[T]) *ResultE[T]
+func (r *ResultE[T]) MustPass(msg string, v ...any)    // panics if err != nil
+func (r *ResultE[T]) MustGet(msg string, v ...any) T   // MustPass + Val
+func (r *ResultE[T]) MustPresent(msg string, v ...any) // MustPass + zero-value check
+```
+
+- **`Bind`** — chains operations on `ResultE`; short-circuits on error, making it easy to compose multiple fallible steps before the final `Must*` call.
+- **`MustPass`** — panics with `"<msg>: <err>"` if the result holds an error. On `Result[T]`, only applicable when `T` is `error`.
 - **`MustGet`** — panics on error, otherwise returns the value.
-- **`MustPresent`** — panics if the value is the zero value (uses `IsEmpty`); useful when a successful operation that returns an empty string or zero integer is itself considered a configuration error.
+- **`MustPresent`** — panics on error or zero value; use when a non-nil, non-zero result is required.
 
 ### Examples
 
-**`NewResult` + `MustGet`** — wrap any `(T, error)` return and extract the value,
-panicking with context if there was an error:
+**`ResultOf` + `MustGet`** — wrap any `(T, error)` return and extract the value:
 
 ```go
-dsn := NewResult(os.LookupEnv("DATABASE_URL")).MustGet("DATABASE_URL is required")
-db  := NewResult(sql.Open("pgx", dsn)).MustGet("failed to open database: %s", dsn)
-NewResult(db.PingContext(ctx)).MustPass("database ping failed")
+dsn := ResultOf(os.LookupEnv("DATABASE_URL")).MustGet("DATABASE_URL is required")
+db  := ResultOf(sql.Open("pgx", dsn)).MustGet("failed to open database: %s", dsn)
 ```
 
-**`NewValueResult` + `MustPresent`** — use when you already have a value (no
-error path) but want to assert it is non-zero. Typical for config values that
-are present but must not be empty:
+**`ResultVal` + `MustPresent`** — assert a value is non-zero when there is no error path:
 
 ```go
 // os.Getenv returns "" on missing — no error, but empty is still wrong
-NewValueResult(os.Getenv("REDIS_HOST")).MustPresent("REDIS_HOST must not be empty")
-
-// or when reading from a parsed config struct
-NewValueResult(cfg.NATSUrl).MustPresent("nats_url is required in config")
-NewValueResult(cfg.AppSecret).MustPresent("app_secret is required in config")
+ResultVal(os.Getenv("REDIS_HOST")).MustPresent("REDIS_HOST must not be empty")
+ResultVal(cfg.NATSUrl).MustPresent("nats_url is required in config")
 ```
 
-**`NewErrorResult` + `MustPass`** — use when an operation produces only an
-error (no meaningful return value), and any non-nil error is fatal:
+**`ResultVal` + `MustPass`** — when the value itself is an `error`:
 
 ```go
-NewErrorResult(os.MkdirAll(cfg.DataDir, 0755)).MustPass("failed to create data dir %q", cfg.DataDir)
-NewErrorResult(nats.Publish("startup", payload)).MustPass("failed to publish startup event")
+ResultVal(db.PingContext(ctx)).MustPass("database ping failed")
+ResultVal(os.MkdirAll(cfg.DataDir, 0755)).MustPass("failed to create data dir %q", cfg.DataDir)
 ```
 
-**`Bind`** — chain multiple fallible steps before the final assertion,
-short-circuiting on the first error:
+**`ResultOf` + `MustPresent`** — assert both success and a non-zero value in one call:
 
 ```go
-token := NewResult(os.LookupEnv("API_TOKEN")).
-    Bind(func(t string) *Result[string] {
+user := ResultOf(db.FindUser(ctx, id)).MustPresent("user %d not found", id)
+```
+
+**`Bind`** — chain multiple fallible steps before the final assertion:
+
+```go
+token := ResultOf(os.LookupEnv("API_TOKEN")).
+    Bind(func(t string) *ResultE[string] {
         if len(t) < 32 {
-            return NewErrorResult[string](fmt.Errorf("token too short"))
+            return ResultOf("", fmt.Errorf("token too short"))
         }
-        return NewValueResult(strings.TrimSpace(t))
+        return ResultOf(strings.TrimSpace(t), nil)
     }).
     MustGet("invalid API_TOKEN")
 ```
