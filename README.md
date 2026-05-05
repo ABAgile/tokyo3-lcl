@@ -599,6 +599,174 @@ profiles := MapConcurrent(userIDs, 4, func(ctx context.Context, id int) Profile 
 
 ---
 
+## crypto/ — AES-256-GCM and envelope encryption
+
+A subpackage covering symmetric encryption primitives plus an envelope-encryption
+pattern layered on a `KeyProvider` interface, so the master key can live wherever
+the deployment requires (in process, sealed file, behind a KMS).
+
+```go
+import lclcrypto "github.com/abagile/tokyo3-lcl/crypto"
+```
+
+Aliasing avoids the stdlib `crypto` collision — pick any name you prefer.
+
+### Direct AEAD primitives
+
+```go
+func Seal(key, plaintext  []byte) ([]byte, error)
+func Open(key, ciphertext []byte) ([]byte, error)
+```
+
+`Seal` encrypts under a 16/24/32-byte AES key using AES-GCM with a fresh 96-bit
+random nonce and returns `nonce || ciphertext+tag`. `Open` is the inverse. Reach
+for these when you already have a key and just need to seal/unseal short blobs
+(cookies, session tokens, signed-but-encrypted payloads).
+
+> **Nonce-reuse limit**: with random 96-bit nonces a single key is collision-safe
+> up to ~2³² messages (NIST SP 800-38D). Rotate keys before exceeding that, or
+> switch to a deterministic counter nonce.
+
+### Random material and key encoding
+
+```go
+func RandomBytes(n int)               ([]byte, error)
+func GenerateKEK()                    (string, error)   // 32-byte AES-256 key, hex-encoded
+func ParseKEK(hexKey string)          ([]byte, error)   // inverse of GenerateKEK
+```
+
+`RandomBytes` is the single source of cryptographically random bytes used
+internally for keys, DEKs, and nonces. `GenerateKEK` / `ParseKEK` cover the
+common "32-byte AES key as a 64-char hex string" exchange format used by env
+vars and config files; despite the KEK naming, the bytes are just an AES-256
+key suitable for any role.
+
+### KeyProvider and envelope encryption
+
+For collections of secrets — or any time you want to rotate the master key
+without re-encrypting every value — use envelope encryption: each value is
+encrypted under its own random Data Encryption Key (DEK), and the DEK is wrapped
+under a longer-lived master key via a `KeyProvider`. Rotating the master only
+requires re-wrapping DEKs; the underlying ciphertexts stay valid.
+
+```go
+type KeyProvider interface {
+    Wrap  (ctx context.Context, dek         []byte) ([]byte, error)
+    Unwrap(ctx context.Context, wrappedDEK  []byte) ([]byte, error)
+}
+
+func NewLocalKeyProvider(masterKey []byte) *LocalKeyProvider
+
+func EncryptEnvelope(ctx context.Context, kp KeyProvider, plaintext []byte) (encryptedValue, wrappedDEK []byte, err error)
+func DecryptEnvelope(ctx context.Context, kp KeyProvider, wrappedDEK, encryptedValue []byte) ([]byte, error)
+func Rewrap        (ctx context.Context, oldKP, newKP KeyProvider, wrappedDEK []byte) ([]byte, error)
+```
+
+`LocalKeyProvider` wraps DEKs with an in-memory AES-256 master key — suitable
+for development and single-server deployments. For production, implement
+`KeyProvider` against AWS KMS, GCP KMS, HashiCorp Vault Transit, or any
+HSM-backed service; the rest of the API is unchanged.
+
+```go
+hex, _ := lclcrypto.GenerateKEK()
+key, _ := lclcrypto.ParseKEK(hex)
+kp     := lclcrypto.NewLocalKeyProvider(key)
+
+ct, wrappedDEK, _ := lclcrypto.EncryptEnvelope(ctx, kp, []byte("postgres://…"))
+pt,             _ := lclcrypto.DecryptEnvelope(ctx, kp, wrappedDEK, ct)
+```
+
+Rotating the master key without re-encrypting any values:
+
+```go
+newKP := lclcrypto.NewLocalKeyProvider(newKey)
+newWrapped, _ := lclcrypto.Rewrap(ctx, kp, newKP, wrappedDEK)
+// persist newWrapped alongside ct; ct stays as-is.
+```
+
+---
+
+## tlsutil/ — TLS config and self-signed cert helpers
+
+Helpers for the boring parts of running a TLS server or client without
+inventing your own PKI: hot-reload a cert/key pair on rotation, build
+`*tls.Config` from PEM files or strings, and ship a self-signed dev
+fallback that covers `localhost`, `*.localhost`, and loopback IPs.
+
+```go
+import "github.com/abagile/tokyo3-lcl/tlsutil"
+```
+
+### CertLoader — hot-reload cert/key on disk change
+
+```go
+type CertLoader struct { /* ... */ }
+
+func NewCertLoader(certFile, keyFile string) *CertLoader
+func (c *CertLoader) GetCertificate(_ *tls.ClientHelloInfo) (*tls.Certificate, error)
+```
+
+`GetCertificate` is shaped to slot directly into `tls.Config.GetCertificate`. On
+every handshake the loader stat-checks the cert file; if the mtime has advanced
+since the last load it reloads the pair and serves the new cert from then on.
+Concurrent stale callers are coalesced through a double-checked write lock. When
+a reload fails (e.g. cert written, key not yet during a rotation) the previously
+cached cert is returned so in-flight handshakes are unaffected.
+
+```go
+loader := tlsutil.NewCertLoader("/etc/tls/server.crt", "/etc/tls/server.key")
+srv := &http.Server{
+    Addr:      ":443",
+    TLSConfig: &tls.Config{GetCertificate: loader.GetCertificate},
+}
+srv.ListenAndServeTLS("", "")  // empty paths — cert comes from GetCertificate
+```
+
+Pairs naturally with cert-manager, ACME tooling, SPIFFE/SPIRE in disk mode, or
+any rotation tool that overwrites the cert/key files in place.
+
+### SelfSignedCert — ephemeral dev fallback
+
+```go
+func SelfSignedCert() (tls.Certificate, error)
+```
+
+Generates an ECDSA P-256 self-signed cert valid for one year. SANs cover
+`localhost`, `*.localhost` (single-label subdomains like `api.localhost`),
+`127.0.0.1`, and `::1`. Use as the TLS fallback when no cert/key files are
+configured — clients need `--insecure` (curl) or trust-store import (browsers),
+but `https://localhost` and `https://anything.localhost` resolve cleanly.
+
+### Building `*tls.Config`
+
+```go
+func CertPoolFromPEM(pemData []byte)                 (*x509.CertPool, error)
+func FromFiles      (certFile, keyFile, caFile string) (*tls.Config,  error)
+func FromPEM        (certPEM,  keyPEM,  caPEM  string) (*tls.Config,  error)
+```
+
+`FromFiles` and `FromPEM` are symmetrical: one takes paths, the other takes
+already-loaded PEM strings. Both return `(nil, nil)` when given no inputs, so
+call sites can switch transparently between TLS and plaintext. `certFile` /
+`keyFile` (or `certPEM` / `keyPEM`) must be set together; the CA input is
+optional and populates `RootCAs` when provided.
+
+```go
+// mTLS client config from disk
+cfg, err := tlsutil.FromFiles(
+    "/etc/tls/client.crt",
+    "/etc/tls/client.key",
+    "/etc/tls/ca.crt",
+)
+if err != nil { /* ... */ }
+http.DefaultClient.Transport = &http.Transport{TLSClientConfig: cfg}
+```
+
+`CertPoolFromPEM` is the lower-level building block when you already have PEM
+bytes and just want a `*x509.CertPool` for `RootCAs` / `ClientCAs`.
+
+---
+
 ## Acknowledgements
 
 The slice and iterator utilities in this library are built on top of
