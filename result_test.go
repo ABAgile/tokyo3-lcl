@@ -63,7 +63,6 @@ func TestResultVal(t *testing.T) {
 	assert.Equal(t, "hello", r.Val())
 }
 
-
 func TestUnwrap(t *testing.T) {
 	t.Run("int", func(t *testing.T) {
 		tests := []struct {

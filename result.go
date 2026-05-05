@@ -1,16 +1,12 @@
 package lcl
 
-import (
-	"fmt"
-	"reflect"
-)
+import "fmt"
 
-// Result holds a value with no error path. Use MustPresent to assert presence.
-type Result[T any] struct {
+type Result[T comparable] struct {
 	value T
 }
 
-func ResultVal[T any](v T) *Result[T] {
+func ResultVal[T comparable](v T) *Result[T] {
 	return &Result[T]{value: v}
 }
 
@@ -20,24 +16,22 @@ func (r *Result[T]) Val() T {
 
 func (r *Result[T]) MustPass(msg string, v ...any) {
 	if err, ok := any(r.value).(error); ok && err != nil {
-		panic(fmt.Sprintf(msg+": "+err.Error(), v...))
+		panicWithErr(msg, err, v...)
 	}
 }
 
 func (r *Result[T]) MustPresent(msg string, v ...any) {
-	var zero T
-	if reflect.DeepEqual(r.value, zero) {
+	if IsEmpty(r.value) {
 		panic(fmt.Sprintf(msg, v...))
 	}
 }
 
-// ResultE holds a value and an error. Use MustPass/MustGet to assert success.
-type ResultE[T any] struct {
+type ResultE[T comparable] struct {
 	value T
 	err   error
 }
 
-func ResultOf[T any](v T, err error) *ResultE[T] {
+func ResultOf[T comparable](v T, err error) *ResultE[T] {
 	return &ResultE[T]{value: v, err: err}
 }
 
@@ -67,14 +61,17 @@ func (r *ResultE[T]) MustGet(msg string, v ...any) T {
 
 func (r *ResultE[T]) MustPass(msg string, v ...any) {
 	if r.err != nil {
-		panic(fmt.Sprintf(msg+": "+r.err.Error(), v...))
+		panicWithErr(msg, r.err, v...)
 	}
 }
 
 func (r *ResultE[T]) MustPresent(msg string, v ...any) {
 	r.MustPass(msg, v...)
-	var zero T
-	if reflect.DeepEqual(r.value, zero) {
+	if IsEmpty(r.value) {
 		panic(fmt.Sprintf(msg, v...))
 	}
+}
+
+func panicWithErr(msg string, err error, v ...any) {
+	panic(fmt.Sprintf(msg+": "+err.Error(), v...))
 }

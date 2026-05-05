@@ -146,8 +146,15 @@ Two types cover distinct cases:
 
 | Type | Carries | Use when |
 |---|---|---|
-| `Result[T]` | value only | you already have the value; no error path |
-| `ResultE[T]` | value + error | wrapping a fallible operation |
+| `Result[T comparable]` | value only | you already have the value; no error path |
+| `ResultE[T comparable]` | value + error | wrapping a fallible operation |
+
+Both types constrain `T` to `comparable` so the zero-value check used by
+`MustPresent` is a direct `==` comparison (via `IsEmpty` in `types.go`) rather
+than a `reflect.DeepEqual` call. This covers the common cases — strings,
+numbers, pointers, interfaces, and structs of comparables — but excludes
+slices, maps, and funcs as the wrapped value. Wrap those in a struct or use a
+pointer if you need them.
 
 ### Constructors
 
@@ -158,7 +165,7 @@ Two types cover distinct cases:
 
 ### Methods
 
-**`Result[T]`**
+**`Result[T comparable]`**
 
 ```go
 func (r *Result[T]) Val() T
@@ -166,7 +173,7 @@ func (r *Result[T]) MustPass(msg string, v ...any)    // when T is error: panics
 func (r *Result[T]) MustPresent(msg string, v ...any) // panics if value is zero
 ```
 
-**`ResultE[T]`**
+**`ResultE[T comparable]`**
 
 ```go
 func (r *ResultE[T]) Val() T
