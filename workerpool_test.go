@@ -83,6 +83,8 @@ func TestRunConcurrent(t *testing.T) {
 		{"single worker", []int{10, 20}, 1, 2},
 		{"empty input", []int{}, 3, 0},
 		{"more workers than jobs", []int{1}, 10, 1},
+		{"zero workers normalizes to one", []int{1, 2}, 0, 2},
+		{"negative workers normalizes to one", []int{1, 2}, -1, 2},
 	}
 
 	for _, tc := range tests {
@@ -148,6 +150,13 @@ func TestMapConcurrent(t *testing.T) {
 			workerCount: 2,
 			mapper:      func(_ context.Context, n int) int { return n },
 			want:        []int{},
+		},
+		{
+			name:        "zero workers normalizes to one",
+			jobs:        []int{1, 2},
+			workerCount: 0,
+			mapper:      func(_ context.Context, n int) int { return n + 1 },
+			want:        []int{2, 3},
 		},
 	}
 

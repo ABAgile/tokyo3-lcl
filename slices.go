@@ -1,73 +1,93 @@
 package lcl
 
-import (
-	"slices"
-
-	"github.com/BooleanCat/go-functional/v2/it"
-)
-
 func Filter[T any, S ~[]T](xs S, pred func(T) bool) S {
-	return slices.Collect(it.Filter(slices.Values(xs), pred))
+	res := make(S, 0, len(xs))
+	for _, x := range xs {
+		if pred(x) {
+			res = append(res, x)
+		}
+	}
+	return res
 }
 
 func Filter2[T any, S ~[]T](xs S, pred func(int, T) bool) S {
-	res := make(S, 0)
-	for _, x := range it.Filter2(slices.All(xs), pred) {
-		res = append(res, x)
+	res := make(S, 0, len(xs))
+	for i, x := range xs {
+		if pred(i, x) {
+			res = append(res, x)
+		}
 	}
 	return res
 }
 
 func FilterError[T any, S ~[]T](xs S, pred func(T) (bool, error)) (S, error) {
-	res := make(S, 0)
-	for x, err := range it.FilterError(slices.Values(xs), pred) {
+	res := make(S, 0, len(xs))
+	for _, x := range xs {
+		ok, err := pred(x)
 		if err != nil {
 			return res, err
 		}
-		res = append(res, x)
+		if ok {
+			res = append(res, x)
+		}
 	}
 	return res, nil
 }
 
 func Exclude[T any, S ~[]T](xs S, pred func(T) bool) S {
-	return slices.Collect(it.Exclude(slices.Values(xs), pred))
+	res := make(S, 0, len(xs))
+	for _, x := range xs {
+		if !pred(x) {
+			res = append(res, x)
+		}
+	}
+	return res
 }
 
 func Exclude2[T any, S ~[]T](xs S, pred func(int, T) bool) S {
-	res := make(S, 0)
-	for _, x := range it.Exclude2(slices.All(xs), pred) {
-		res = append(res, x)
+	res := make(S, 0, len(xs))
+	for i, x := range xs {
+		if !pred(i, x) {
+			res = append(res, x)
+		}
 	}
 	return res
 }
 
 func ExcludeError[T any, S ~[]T](xs S, pred func(T) (bool, error)) (S, error) {
-	res := make(S, 0)
-	for x, err := range it.ExcludeError(slices.Values(xs), pred) {
+	res := make(S, 0, len(xs))
+	for _, x := range xs {
+		ok, err := pred(x)
 		if err != nil {
 			return res, err
 		}
-		res = append(res, x)
+		if !ok {
+			res = append(res, x)
+		}
 	}
 	return res, nil
 }
 
-func Map[T, R any](xs []T, mapper func(T) R) []R {
-	return slices.Collect(it.Map(slices.Values(xs), mapper))
-}
-
-func Map2[T, R any](xs []T, mapper func(int, T) R) []R {
-	res := make([]R, 0)
-	f := func(i int, x T) (any, R) { return nil, mapper(i, x) }
-	for _, r := range it.Map2(slices.All(xs), f) {
-		res = append(res, r)
+func Map[T, R any, S ~[]T](xs S, mapper func(T) R) []R {
+	res := make([]R, len(xs))
+	for i, x := range xs {
+		res[i] = mapper(x)
 	}
 	return res
 }
 
-func MapError[T, R any](xs []T, mapper func(T) (R, error)) ([]R, error) {
-	res := make([]R, 0)
-	for r, err := range it.MapError(slices.Values(xs), mapper) {
+func Map2[T, R any, S ~[]T](xs S, mapper func(int, T) R) []R {
+	res := make([]R, len(xs))
+	for i, x := range xs {
+		res[i] = mapper(i, x)
+	}
+	return res
+}
+
+func MapError[T, R any, S ~[]T](xs S, mapper func(T) (R, error)) ([]R, error) {
+	res := make([]R, 0, len(xs))
+	for _, x := range xs {
+		r, err := mapper(x)
 		if err != nil {
 			return res, err
 		}
@@ -76,45 +96,25 @@ func MapError[T, R any](xs []T, mapper func(T) (R, error)) ([]R, error) {
 	return res, nil
 }
 
-func Fold[T, R any](xs []T, accum func(R, T) R, initial R) R {
-	return it.Fold(slices.Values(xs), accum, initial)
-}
-
-func Fold2[T, R any](xs []T, accum func(R, int, T) R, initial R) R {
-	return it.Fold2(slices.All(xs), accum, initial)
-}
-
-func FoldError[T, R any](xs []T, accum func(R, T) (R, error), initial R) (R, error) {
+func Fold[T, R any, S ~[]T](xs S, accum func(R, T) R, initial R) R {
 	res := initial
-	for x := range slices.Values(xs) {
-		r, err := accum(res, x)
-		if err != nil {
-			return res, err
-		}
-		res = r
-	}
-	return res, nil
-}
-
-func FoldRight[T, R any](xs []T, accum func(R, T) R, initial R) R {
-	res := initial
-	for _, x := range slices.Backward(xs) {
+	for _, x := range xs {
 		res = accum(res, x)
 	}
 	return res
 }
 
-func FoldRight2[T, R any](xs []T, accum func(R, int, T) R, initial R) R {
+func Fold2[T, R any, S ~[]T](xs S, accum func(R, int, T) R, initial R) R {
 	res := initial
-	for i, x := range slices.Backward(xs) {
+	for i, x := range xs {
 		res = accum(res, i, x)
 	}
 	return res
 }
 
-func FoldRightError[T, R any](xs []T, accum func(R, T) (R, error), initial R) (R, error) {
+func FoldError[T, R any, S ~[]T](xs S, accum func(R, T) (R, error), initial R) (R, error) {
 	res := initial
-	for _, x := range slices.Backward(xs) {
+	for _, x := range xs {
 		r, err := accum(res, x)
 		if err != nil {
 			return res, err
@@ -124,16 +124,48 @@ func FoldRightError[T, R any](xs []T, accum func(R, T) (R, error), initial R) (R
 	return res, nil
 }
 
-func ForEach[T any](xs []T, f func(T)) {
-	it.ForEach(slices.Values(xs), f)
+func FoldRight[T, R any, S ~[]T](xs S, accum func(R, T) R, initial R) R {
+	res := initial
+	for i := len(xs) - 1; i >= 0; i-- {
+		res = accum(res, xs[i])
+	}
+	return res
 }
 
-func ForEach2[T any](xs []T, f func(int, T)) {
-	it.ForEach2(slices.All(xs), f)
+func FoldRight2[T, R any, S ~[]T](xs S, accum func(R, int, T) R, initial R) R {
+	res := initial
+	for i := len(xs) - 1; i >= 0; i-- {
+		res = accum(res, i, xs[i])
+	}
+	return res
 }
 
-func ForEachWhile[T any](xs []T, pred func(T) bool) {
-	for x := range slices.Values(xs) {
+func FoldRightError[T, R any, S ~[]T](xs S, accum func(R, T) (R, error), initial R) (R, error) {
+	res := initial
+	for i := len(xs) - 1; i >= 0; i-- {
+		r, err := accum(res, xs[i])
+		if err != nil {
+			return res, err
+		}
+		res = r
+	}
+	return res, nil
+}
+
+func ForEach[T any, S ~[]T](xs S, f func(T)) {
+	for _, x := range xs {
+		f(x)
+	}
+}
+
+func ForEach2[T any, S ~[]T](xs S, f func(int, T)) {
+	for i, x := range xs {
+		f(i, x)
+	}
+}
+
+func ForEachWhile[T any, S ~[]T](xs S, pred func(T) bool) {
+	for _, x := range xs {
 		if !pred(x) {
 			return
 		}

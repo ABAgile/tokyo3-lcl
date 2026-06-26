@@ -1,5 +1,3 @@
-github.com/BooleanCat/go-functional/v2 v2.5.1 h1:9dMUAHt5TJktTCOwV3EUIgNuGX5MMHGW4g0we+mlzZU=
-github.com/BooleanCat/go-functional/v2 v2.5.1/go.mod h1:IpUUAXAc9CiWDb+YDXkJyyUhtOVqDtyICDRg/de1IaQ=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=

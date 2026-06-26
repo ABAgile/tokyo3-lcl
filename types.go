@@ -50,7 +50,8 @@ func FromPtr[T any](ptr *T, fallback ...T) T {
 	if len(fallback) > 0 {
 		return fallback[0]
 	}
-	return *new(T)
+	var zero T
+	return zero
 }
 
 func ToAnySlice[T any](in []T) []any {

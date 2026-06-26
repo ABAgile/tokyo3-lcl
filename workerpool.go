@@ -20,7 +20,7 @@ type WorkerPool[T any] struct {
 // NewWorkerPool creates a new worker pool.
 func NewWorkerPool[T any](numWorkers int, jobs <-chan T, handler HandlerFunc[T], logger *slog.Logger) *WorkerPool[T] {
 	return &WorkerPool[T]{
-		numWorkers: numWorkers,
+		numWorkers: normalizeWorkerCount(numWorkers),
 		jobs:       jobs,
 		handler:    handler,
 		logger:     logger,
@@ -50,6 +50,7 @@ func (p *WorkerPool[T]) Run(ctx context.Context) {
 }
 
 func RunConcurrent[T any](ctx context.Context, jobs []T, workerCount int, fn func(context.Context, T)) {
+	workerCount = normalizeWorkerCount(workerCount)
 	jobCh := make(chan T, workerCount*3) // buffered channel, improves throughput
 	go func() {
 		for _, j := range jobs {
@@ -65,6 +66,7 @@ func RunConcurrent[T any](ctx context.Context, jobs []T, workerCount int, fn fun
 }
 
 func MapConcurrent[T any, R any](ctx context.Context, jobs []T, workerCount int, fn func(context.Context, T) R) []R {
+	workerCount = normalizeWorkerCount(workerCount)
 	jobCh := make(chan Tuple2[int, T], workerCount*3) // buffered channel, improves throughput
 	go func() {
 		for i, j := range jobs {
@@ -80,4 +82,11 @@ func MapConcurrent[T any, R any](ctx context.Context, jobs []T, workerCount int,
 	wp := NewWorkerPool(workerCount, jobCh, handler, slog.New(slog.DiscardHandler))
 	wp.Run(ctx)
 	return results
+}
+
+func normalizeWorkerCount(workerCount int) int {
+	if workerCount <= 0 {
+		return 1
+	}
+	return workerCount
 }

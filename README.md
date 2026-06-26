@@ -6,93 +6,111 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/abagile/tokyo3-lcl)](https://goreportcard.com/report/github.com/abagile/tokyo3-lcl)
 [![codecov](https://codecov.io/gh/abagile/tokyo3-lcl/branch/main/graph/badge.svg)](https://codecov.io/gh/abagile/tokyo3-lcl)
 
-A generic Go utility library providing useful helpers for basic yet handy
-operations, as the core building block for most applications & utility
-libraries
+A generic Go utility library providing small, handy building blocks for
+application code.
 
 **Requires Go 1.26+**
 
-```
-go get github.com/abagile/tokyo-lcl
+```sh
+go get github.com/abagile/tokyo3-lcl
 ```
 
 ---
 
 ## Design philosophy
 
-### Iterator-first collection manipulation
+### Simple slice-in/slice-out helpers
 
-All slice operations in `slices.go` are built on Go 1.23's `iter.Seq` / `iter.Seq2`
-push-iterator model rather than operating on concrete slices internally. Functions
-accept a `[]T` for ergonomics at the call site, but immediately convert to iterators
-via `slices.Values` / `slices.All` and delegate the actual traversal to
+The collection helpers in `slices.go` operate directly on concrete slices using
+plain Go loops. This keeps the package dependency-light and makes allocation and
+control flow easy to read.
+
+Filtering, grouping, partitioning, and padding functions preserve named slice
+types through `S ~[]T`. Mapping functions return `[]R` because the element type
+can change.
+
+These helpers are intentionally eager: each function consumes its input and
+returns a concrete slice or value. Chaining helpers is therefore easy to read,
+but it allocates intermediate slices:
+
+```go
+activeNames := Map(
+    Filter(users, func(u User) bool { return u.Active }),
+    func(u User) string { return u.Name },
+)
+```
+
+If you need lazy iterator pipelines, non-slice sources, or allocation-free
+composition across multiple transformations, use Go's `iter` package directly
+or a library such as
 [`github.com/BooleanCat/go-functional`](https://github.com/BooleanCat/go-functional).
 
-`iter.Seq[V]` is defined as `func(yield func(V) bool)` — the iterator owns the
-loop and pushes each value into the consumer's `yield` callback (an internal
-iterator). This is distinct from a pull model, where the consumer calls `next()` to
-request one value at a time; Go's `iter.Pull` can convert a push iterator into that
-style when needed, but ranging directly over an `iter.Seq` stays in push mode and is
-the idiomatic choice here.
+### Small panic-on-failure helpers, not a Result monad
 
-This means:
-- **Composition is lazy by default** — `Filter`, `Map`, etc. chain without allocating intermediate slices inside the pipeline.
-- **`Error` variants short-circuit cleanly** — iteration stops the moment a predicate or mapper returns an error, with no extra bookkeeping in the caller.
-- **Custom slice types are preserved** — all functions are constrained on `S ~[]T`, so a named type such as `type UserList []User` comes out the other side unchanged.
-
-The iterator model is most valuable for operations that can terminate early
-— `Filter`, `Exclude`, `MapError`, `FoldError`, `ForEachWhile`, and similar.
-For operations that must consume the entire input before producing a result,
-the benefit is marginal. `Mean` and `Mode` fall into this category: they
-require a full pass regardless, so they accept a concrete `[]T` instead, which
-lets them chain directly with the output of any `slices.go` helper and makes
-the full-consumption contract explicit at the call site.
+`result.go` keeps normal Go `(T, error)` values visible and provides small
+`Must*` helpers for CLI tools and startup paths where a failure should abort
+immediately. For normal request/runtime code, prefer explicit error handling.
 
 ---
 
 ## slices.go — Functional slice operations
 
-All functions preserve the element type of custom slice types (`S ~[]T`).
-
 ### Function naming conventions
 
-Each operation comes in up to three variants that mirror Go's iterator types directly:
+Each operation comes in up to three variants:
 
-| Suffix | Iterator type | Meaning |
-|---|---|---|
-| *(none)* | `iter.Seq[V]` | Plain value sequence |
-| `2` | `iter.Seq2[K, V]` | `(index, value)` pair — index is the slice position |
-| `Error` | — | Same as the plain variant, but the predicate/mapper may return an `error`; iteration stops immediately on the first non-nil error |
+| Suffix | Meaning |
+|---|---|
+| *(none)* | Plain value callback |
+| `2` | Index-aware callback receiving `(index, value)` |
+| `Error` | Callback may return an `error`; iteration stops on the first non-nil error |
 
-So `Filter`, `Filter2`, and `FilterError` are the same operation expressed at three
-levels of richness. Reach for the plain variant by default; add `2` when you need
-the position, add `Error` when the callback can fail.
-
-These helpers cover the common case of working with a concrete `[]T`. They are
-intentionally thin — each one converts the slice to an iterator, delegates to
-[`go-functional/it`](https://github.com/BooleanCat/go-functional), and collects the
-result back into a slice. For pipelines that compose multiple steps, operate on
-non-slice sources, or need finer control over iteration, use the `it` package
-directly rather than chaining these helpers.
+Reach for the plain variant by default; add `2` when you need the position, and
+add `Error` when the callback can fail.
 
 ### Filtering
+
 | Function | Description |
 |---|---|
 | `Filter(xs, pred)` | Keep elements where `pred` is true |
 | `Filter2(xs, pred)` | Like `Filter` but predicate receives `(index, value)` |
-| `FilterError(xs, pred)` | Like `Filter` but predicate may return an error; stops on first error |
+| `FilterError(xs, pred)` | Like `Filter` but predicate may return an error |
 | `Exclude(xs, pred)` | Keep elements where `pred` is false |
 | `Exclude2(xs, pred)` | Like `Exclude` with index-aware predicate |
 | `ExcludeError(xs, pred)` | Like `Exclude` but predicate may return an error |
 
+```go
+evens := Filter([]int{1, 2, 3, 4}, func(n int) bool {
+    return n%2 == 0
+})
+// []int{2, 4}
+
+oddPositions := Exclude2([]string{"a", "b", "c", "d"}, func(i int, _ string) bool {
+    return i%2 == 0
+})
+// []string{"b", "d"}
+```
+
 ### Transformation
+
 | Function | Description |
 |---|---|
 | `Map(xs, mapper)` | Transform each element |
 | `Map2(xs, mapper)` | Transform with `(index, value)` mapper |
 | `MapError(xs, mapper)` | Transform; stops on first error |
 
+```go
+labels := Map([]int{10, 20, 30}, func(n int) string {
+    return fmt.Sprintf("value=%d", n)
+})
+
+indexed := Map2([]string{"a", "b"}, func(i int, s string) string {
+    return fmt.Sprintf("%d:%s", i, s)
+})
+```
+
 ### Folding
+
 | Function | Description |
 |---|---|
 | `Fold(xs, accum, initial)` | Left fold |
@@ -102,18 +120,42 @@ directly rather than chaining these helpers.
 | `FoldRight2(xs, accum, initial)` | Right fold with index |
 | `FoldRightError(xs, accum, initial)` | Right fold; stops on first error |
 
+```go
+sum := Fold([]int{1, 2, 3}, func(acc, n int) int {
+    return acc + n
+}, 0)
+// 6
+
+reversed := FoldRight([]string{"a", "b", "c"}, func(acc, s string) string {
+    return acc + s
+}, "")
+// "cba"
+```
+
 ### Iteration
+
 | Function | Description |
 |---|---|
 | `ForEach(xs, f)` | Call `f` for every element |
 | `ForEach2(xs, f)` | Call `f(index, value)` for every element |
 | `ForEachWhile(xs, pred)` | Iterate while `pred` returns true |
 
+```go
+ForEach(files, func(path string) {
+    log.Println("processing", path)
+})
+
+ForEachWhile(events, func(e Event) bool {
+    return handle(e) // return false to stop early
+})
+```
+
 ### Grouping
+
 | Function | Description |
 |---|---|
 | `GroupBy(xs, mapper)` | `map[R]S` — groups share the same key; order within each group is preserved |
-| `PartitionBy(xs, mapper)` | `[]S` — like `GroupBy` but returns an ordered slice of groups in first-seen key order, rather than a map |
+| `PartitionBy(xs, mapper)` | `[]S` — like `GroupBy`, but groups are returned in first-seen key order |
 | `FrequenciesBy(xs, mapper)` | `map[R]int` — count occurrences by key |
 
 Pass `Id` as the mapper when the element itself is the key:
@@ -126,143 +168,98 @@ PartitionBy(runs, Id)     // ordered groups, e.g. [1,1,2,2,1] → [[1,1,1],[2,2]
 ```
 
 ### Padding
+
 | Function | Description |
 |---|---|
 | `Pad(xs, n)` | Extend slice to length `n` with zero values; panics if `n < 0` |
 | `PadWith(xs, n, padding)` | Like `Pad` but fills with `padding` |
 
+```go
+Pad([]int{1, 2}, 5)          // []int{1, 2, 0, 0, 0}
+PadWith([]int{1, 2}, 5, 99)  // []int{1, 2, 99, 99, 99}
+```
+
 ---
 
-## result.go — Panic-on-failure monadic helper
+## result.go — Panic-on-failure helpers
 
 Designed for CLI tools and startup paths where certain failures have no sensible
-recovery action — a missing required environment variable, a database connection
-that must succeed, a NATS dial that is a hard dependency. Rather than threading
-errors through every call frame, wrap the fallible operation and call a `Must*`
-method: the process panics with a clear, formatted message on failure, or you get
-the value and move on.
-
-Two types cover distinct cases:
-
-| Type | Carries | Use when |
-|---|---|---|
-| `Result[T comparable]` | value only | you already have the value; no error path |
-| `ResultE[T comparable]` | value + error | wrapping a fallible operation |
-
-Both types constrain `T` to `comparable` so the zero-value check used by
-`MustPresent` is a direct `==` comparison (via `IsEmpty` in `types.go`) rather
-than a `reflect.DeepEqual` call. This covers the common cases — strings,
-numbers, pointers, interfaces, and structs of comparables — but excludes
-slices, maps, and funcs as the wrapped value. Wrap those in a struct or use a
-pointer if you need them.
-
-### Constructors
-
-| Constructor | Returns | Description |
-|---|---|---|
-| `ResultVal(v)` | `*Result[T]` | Wraps a plain value |
-| `ResultOf(v, err)` | `*ResultE[T]` | Wraps any `(T, error)` pair |
-
-### Methods
-
-**`Result[T comparable]`**
+recovery action — a required environment variable is missing, a database
+connection must succeed, or a hard dependency cannot be reached. The helpers
+panic with a clear message on failure, or return the value and move on.
 
 ```go
-func (r *Result[T]) Val() T
-func (r *Result[T]) MustPass(msg string, v ...any)    // when T is error: panics if non-nil
-func (r *Result[T]) MustPresent(msg string, v ...any) // panics if value is zero
+func Must[T any](value T, err error) T
+func MustMsg[T any](value T, err error, msg string, args ...any) T
+func MustPass(err error, msg string, args ...any)
+func MustPresent[T comparable](value T, msg string, args ...any) T
 ```
 
-**`ResultE[T comparable]`**
+- **`Must`** — unwraps a `(T, error)` pair. Panics with the original error when
+  `err != nil`.
+- **`MustMsg`** — like `Must`, but panics with `"<formatted msg>: <err>"`.
+- **`MustPass`** — for error-only calls.
+- **`MustPresent`** — panics when the value is the zero value; otherwise returns
+  it. The value must be `comparable` so the check can use direct `==`.
+
+Examples:
 
 ```go
-func (r *ResultE[T]) Val() T
-func (r *ResultE[T]) Err() error
-func (r *ResultE[T]) Unwrap() (T, error)
-func (r *ResultE[T]) Bind(f func(T) *ResultE[T]) *ResultE[T]
-func (r *ResultE[T]) MustPass(msg string, v ...any)    // panics if err != nil
-func (r *ResultE[T]) MustGet(msg string, v ...any) T   // MustPass + Val
-func (r *ResultE[T]) MustPresent(msg string, v ...any) // MustPass + zero-value check
+db := Must(sql.Open("pgx", dsn))
+MustPass(db.PingContext(ctx), "database ping failed")
+
+redisHost := MustPresent(os.Getenv("REDIS_HOST"), "REDIS_HOST must not be empty")
 ```
 
-- **`Bind`** — chains operations on `ResultE`; short-circuits on error, making it easy to compose multiple fallible steps before the final `Must*` call.
-- **`MustPass`** — panics with `"<msg>: <err>"` if the result holds an error. On `Result[T]`, only applicable when `T` is `error`.
-- **`MustGet`** — panics on error, otherwise returns the value.
-- **`MustPresent`** — panics on error or zero value; use when a non-nil, non-zero result is required.
-
-### Examples
-
-**`ResultOf` + `MustGet`** — wrap any `(T, error)` return and extract the value:
+Use `MustMsg` when you already have separate `value, err` variables and want
+extra context:
 
 ```go
-dsn := ResultOf(os.LookupEnv("DATABASE_URL")).MustGet("DATABASE_URL is required")
-db  := ResultOf(sql.Open("pgx", dsn)).MustGet("failed to open database: %s", dsn)
+file, err := os.Open(path)
+file = MustMsg(file, err, "open %q", path)
 ```
 
-**`ResultVal` + `MustPresent`** — assert a value is non-zero when there is no error path:
-
-```go
-// os.Getenv returns "" on missing — no error, but empty is still wrong
-ResultVal(os.Getenv("REDIS_HOST")).MustPresent("REDIS_HOST must not be empty")
-ResultVal(cfg.NATSUrl).MustPresent("nats_url is required in config")
-```
-
-**`ResultVal` + `MustPass`** — when the value itself is an `error`:
-
-```go
-ResultVal(db.PingContext(ctx)).MustPass("database ping failed")
-ResultVal(os.MkdirAll(cfg.DataDir, 0755)).MustPass("failed to create data dir %q", cfg.DataDir)
-```
-
-**`ResultOf` + `MustPresent`** — assert both success and a non-zero value in one call:
-
-```go
-user := ResultOf(db.FindUser(ctx, id)).MustPresent("user %d not found", id)
-```
-
-**`Bind`** — chain multiple fallible steps before the final assertion:
-
-```go
-token := ResultOf(os.LookupEnv("API_TOKEN")).
-    Bind(func(t string) *ResultE[string] {
-        if len(t) < 32 {
-            return ResultOf("", fmt.Errorf("token too short"))
-        }
-        return ResultOf(strings.TrimSpace(t), nil)
-    }).
-    MustGet("invalid API_TOKEN")
-```
+For request handlers, library APIs, and recoverable failures, prefer normal Go
+error returns instead of panics.
 
 ---
 
 ## math.go — Statistical helpers
 
 ### `MinMax`
+
 ```go
 func MinMax[T cmp.Ordered](a, b T) (min, max T)
 ```
+
 Returns `(min, max)` regardless of argument order.
 
 ### `Clamp`
+
 ```go
 func Clamp[T cmp.Ordered](value, min, max T) T
 ```
+
 Clamps `value` into `[min, max]`. Caller must ensure `min <= max`.
 
 ### `Mean`
+
 ```go
 func Mean[T Number](xs []T) (T, bool)
 ```
+
 Returns the arithmetic mean of the slice. Returns `(zero, false)` for an empty
-slice. Accepts the result of any `slices.go` helper directly.
+slice.
 
 ### `Mode`
+
 ```go
 func Mode[T comparable](xs []T) ([]T, bool)
 ```
-Returns all values that appear with the highest frequency. Returns `([],
-false)` for an empty slice. Order of results is non-deterministic when multiple
-values tie. Accepts the result of any `slices.go` helper directly.
+
+Returns all values that appear with the highest frequency. Returns `([], false)`
+for an empty slice. Order of results is non-deterministic when multiple values
+tie.
 
 ---
 
@@ -286,8 +283,8 @@ func Coalesced[T comparable](values ...T) T           // first non-zero, or zero
 ### Pointer helpers
 
 ```go
-func ToPtr[T comparable](v T) *T                      // nil if v is zero
-func FromPtr[T any](ptr *T, fallback ...T) T          // dereference or fallback/zero
+func ToPtr[T comparable](v T) *T             // nil if v is zero
+func FromPtr[T any](ptr *T, fallback ...T) T // dereference or fallback/zero
 ```
 
 ### Slice conversion
@@ -299,13 +296,18 @@ func FromAnySlice[T any](in []any) ([]T, bool)   // false if any element cannot 
 
 ### Nested data access
 
-`GetIn` and `SetIn` navigate nested `map[string]any`, `map[any]any`, and `[]any` structures
-using a dot-separated path string. Slice elements are accessed by numeric index.
+`GetIn` and `SetIn` navigate nested data structures using a dot-separated path
+string. Slice elements are accessed by numeric index.
 
 ```go
 func GetIn(data any, path string) (any, error)
 func SetIn(data any, path string, value any) error
 ```
+
+`GetIn` supports `map[string]any`, `map[any]any`, and `[]any` while traversing.
+`SetIn` supports `map[string]any` and `[]any`; it automatically creates
+intermediate `map[string]any` nodes for missing map keys. It does **not** grow
+slices — the index must already be in bounds.
 
 ```go
 data := map[string]any{
@@ -318,18 +320,15 @@ v, _ := GetIn(data, "user.scores.1")  // 20
 SetIn(data, "user.scores.1", 99)      // scores[1] = 99
 ```
 
-`SetIn` automatically creates intermediate `map[string]any` nodes for missing keys.
-It does **not** grow slices — the index must already be in bounds.
-
 ### Identity
 
 ```go
 func Id[T any](v T) T
 ```
 
-Returns its argument unchanged. Primarily useful as a first-class mapper when the
-element itself should be the key — avoiding the need to write `func(x T) T { return x }`
-at every call site:
+Returns its argument unchanged. Primarily useful as a first-class mapper when
+the element itself should be the key — avoiding the need to write
+`func(x T) T { return x }` at every call site:
 
 ```go
 FrequenciesBy(tags, Id)    // count each tag
@@ -349,7 +348,8 @@ type Tuple3[A, B, C any]    struct{ A A; B B; C C }
 type Tuple4[A, B, C, D any] struct{ A A; B B; C C; D D }
 ```
 
-Each type has an `Unpack()` method returning the fields as multiple return values.
+Each type has an `Unpack()` method returning the fields as multiple return
+values.
 
 ### Constructors
 
@@ -362,7 +362,7 @@ T4(a, b, c, d)    Tuple4[A, B, C, D]
 ### Zip
 
 Combines multiple slices into a slice of tuples. Output length equals the
-longest input; shorter inputs are padded with zero values.
+shortest input.
 
 ```go
 Zip2(a []A, b []B)             []Tuple2[A, B]
@@ -458,22 +458,23 @@ changed := Filter(pairs, func(p Tuple2[string, string]) bool {
 ## eventbus.go — In-process typed event bus
 
 A lightweight, thread-safe event bus for decoupling components within a single
-process. Handlers are registered per event type using Go generics — the type
-key is derived via reflection at subscription time, so the map stays strongly
-typed without requiring callers to supply type tokens manually. Publishing fans
-out to all matching handlers concurrently in separate goroutines and blocks
-until every handler returns, making `Publish` synchronous from the caller's
-perspective.
+process. Handlers are registered per event type using Go generics — the type key
+is derived via reflection at subscription time, so callers do not need to supply
+manual type tokens.
 
-A `sync.RWMutex` protects the handler map; `Subscribe` takes a write lock while
+Publishing fans out to all matching handlers concurrently in separate goroutines
+and blocks until every handler returns, making `Publish` synchronous from the
+caller's perspective.
+
+A `sync.RWMutex` protects the handler map. `Subscribe` takes a write lock while
 `Publish` snapshots the relevant handler slice under a read lock and then
-releases it before dispatching, so subscriptions from other goroutines are
-never blocked by long-running handlers.
+releases it before dispatching, so subscriptions from other goroutines are not
+blocked by long-running handlers.
 
-Every handler receives the caller's `context.Context`. If the context is
-already cancelled when `Publish` is called, no handlers run. Handlers are
-responsible for checking `ctx.Err()` themselves if they perform long work — the
-bus does not cancel in-flight handlers mid-execution.
+Every handler receives the caller's `context.Context`. If the context is already
+cancelled when `Publish` is called, no handlers run. Handlers are responsible for
+checking `ctx.Err()` themselves if they perform long work — the bus does not
+cancel in-flight handlers mid-execution.
 
 ### Normal usage
 
@@ -495,10 +496,11 @@ Publish(context.Background(), bus, OrderPlaced{OrderID: "ord-123"})
 Publish(context.Background(), bus, PaymentFailed{Reason: "insufficient funds"})
 ```
 
-### Catch-all handler
+### Audit/logging handler with `any`
 
-Subscribe to `any` to receive every event regardless of type — useful for
-logging, tracing, or forwarding to an external sink:
+Subscriptions are keyed by the **static generic event type**. A subscription to
+`any` is useful for audit/logging paths, but it only receives events that are
+published as `Publish[any](...)`.
 
 ```go
 Subscribe(bus, func(ctx context.Context, e any) {
@@ -507,10 +509,12 @@ Subscribe(bus, func(ctx context.Context, e any) {
         log.Printf("audit: order %s placed", ev.OrderID)
     case PaymentFailed:
         log.Printf("audit: payment failed — %s", ev.Reason)
+    default:
+        log.Printf("audit: event %T", ev)
     }
 })
 
-// Must be published as any to match the any subscription key
+// Must be published as any to match the any subscription key.
 Publish[any](context.Background(), bus, OrderPlaced{OrderID: "ord-123"})
 ```
 
@@ -519,6 +523,7 @@ Publish[any](context.Background(), bus, OrderPlaced{OrderID: "ord-123"})
 ## workerpool.go — Concurrent job processing
 
 Helpers for running work concurrently without managing goroutines directly.
+Worker counts less than one are normalized to one.
 
 ### `WorkerPool`
 
@@ -562,13 +567,13 @@ Runs `fn` concurrently over every element of a slice. Blocks until all jobs are
 done. Use this when you need side effects but not return values.
 
 ```go
-func RunConcurrent[T any](jobs []T, workerCount int, fn func(context.Context, T))
+func RunConcurrent[T any](ctx context.Context, jobs []T, workerCount int, fn func(context.Context, T))
 ```
 
 ```go
 files := []string{"a.csv", "b.csv", "c.csv"}
 
-RunConcurrent(files, 4, func(ctx context.Context, path string) {
+RunConcurrent(ctx, files, 4, func(ctx context.Context, path string) {
     if err := uploadFile(ctx, path); err != nil {
         log.Printf("upload failed: %s: %v", path, err)
     }
@@ -581,13 +586,13 @@ Like `RunConcurrent` but collects results. Output order matches input order
 regardless of which worker processes which job.
 
 ```go
-func MapConcurrent[T any, R any](jobs []T, workerCount int, fn func(context.Context, T) R) []R
+func MapConcurrent[T any, R any](ctx context.Context, jobs []T, workerCount int, fn func(context.Context, T) R) []R
 ```
 
 ```go
 userIDs := []int{1, 2, 3, 4, 5}
 
-profiles := MapConcurrent(userIDs, 4, func(ctx context.Context, id int) Profile {
+profiles := MapConcurrent(ctx, userIDs, 4, func(ctx context.Context, id int) Profile {
     p, err := fetchProfile(ctx, id)
     if err != nil {
         return Profile{} // zero value on failure
@@ -597,12 +602,11 @@ profiles := MapConcurrent(userIDs, 4, func(ctx context.Context, id int) Profile 
 // profiles[0] corresponds to userIDs[0], profiles[1] to userIDs[1], etc.
 ```
 
+---
 
-## Acknowledgements
+## Related iterator tooling
 
-The slice and iterator utilities in this library are built on top of
-[**BooleanCat/go-functional**](https://github.com/BooleanCat/go-functional), which
-provides the composable `iter.Seq`-based primitives (`it.Filter`, `it.Map`,
-`it.Fold`, `it.ForEach`, and their `2` / `Error` variants) that power the
-collection functions here. go-functional deserves full credit for the iterator
-plumbing that makes lazy, allocation-free pipelines possible in idiomatic Go.
+This package intentionally keeps `slices.go` eager and dependency-free. For lazy
+iterator evaluation and composable pipelines, consider using Go's standard
+`iter` package directly or
+[`github.com/BooleanCat/go-functional`](https://github.com/BooleanCat/go-functional).
