@@ -35,7 +35,8 @@ func formatMsg(defaultMsg string, msg ...any) string {
 
 	format, ok := msg[0].(string)
 	if !ok {
-		return fmt.Sprint(msg...)
+		// Use a full-slice expression to skip go vet wrapper inference.
+		return fmt.Sprint(msg[:]...)
 	}
 	if len(msg) == 1 {
 		return format

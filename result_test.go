@@ -35,9 +35,8 @@ func TestMustPass(t *testing.T) {
 	assert.EqualError(t, err, "context: something went wrong")
 	assert.ErrorIs(t, err, errSample)
 
-	format := "failed for %s"
 	err = panicError(t, func() {
-		MustPass(errSample, format, "db")
+		MustPass(errSample, "failed for %s", "db")
 	})
 	assert.EqualError(t, err, "failed for db: something went wrong")
 	assert.ErrorIs(t, err, errSample)
@@ -52,9 +51,8 @@ func TestMustPresent(t *testing.T) {
 
 	t.Run("string", func(t *testing.T) {
 		assert.Equal(t, "hello", MustPresent("hello"))
-		format := "missing %s"
 		err := panicError(t, func() {
-			MustPresent("", format, "name")
+			MustPresent("", "missing %s", "name")
 		})
 		assert.EqualError(t, err, "missing name")
 	})
