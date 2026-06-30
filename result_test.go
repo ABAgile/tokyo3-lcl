@@ -2,57 +2,82 @@ package lcl
 
 import (
 	"errors"
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var errSample = errors.New("something went wrong")
 
-func TestMust(t *testing.T) {
-	got := Must(42, nil)
+func TestMustGet(t *testing.T) {
+	got := MustGet(42, nil)
 	assert.Equal(t, 42, got)
 
-	assert.PanicsWithValue(t, errSample, func() {
-		Must(0, errSample)
+	err := panicError(t, func() {
+		MustGet(0, errSample)
 	})
-}
-
-func TestMustMsg(t *testing.T) {
-	got := MustMsg("hello", nil, "context")
-	assert.Equal(t, "hello", got)
-
-	assert.PanicsWithValue(t, fmt.Sprintf("context: %s", errSample), func() {
-		MustMsg("", errSample, "context")
-	})
-
-	assert.PanicsWithValue(t, fmt.Sprintf("failed for db: %s", errSample), func() {
-		MustMsg("", errSample, "failed for %s", "db")
-	})
+	assert.Same(t, errSample, err)
 }
 
 func TestMustPass(t *testing.T) {
+	assert.NotPanics(t, func() { MustPass(nil) })
 	assert.NotPanics(t, func() { MustPass(nil, "context") })
-	assert.PanicsWithValue(t, fmt.Sprintf("context: %s", errSample), func() {
+
+	err := panicError(t, func() {
+		MustPass(errSample)
+	})
+	assert.Same(t, errSample, err)
+
+	err = panicError(t, func() {
 		MustPass(errSample, "context")
 	})
+	assert.EqualError(t, err, "context: something went wrong")
+	assert.ErrorIs(t, err, errSample)
+
+	format := "failed for %s"
+	err = panicError(t, func() {
+		MustPass(errSample, format, "db")
+	})
+	assert.EqualError(t, err, "failed for db: something went wrong")
+	assert.ErrorIs(t, err, errSample)
 }
 
 func TestMustPresent(t *testing.T) {
 	t.Run("int", func(t *testing.T) {
-		assert.Equal(t, 1, MustPresent(1, "msg"))
-		assert.PanicsWithValue(t, "msg", func() { MustPresent(0, "msg") })
+		assert.Equal(t, 1, MustPresent(1))
+		err := panicError(t, func() { MustPresent(0, "msg") })
+		assert.EqualError(t, err, "msg")
 	})
 
 	t.Run("string", func(t *testing.T) {
-		assert.Equal(t, "hello", MustPresent("hello", "msg"))
-		assert.PanicsWithValue(t, "missing name", func() {
-			MustPresent("", "missing %s", "name")
+		assert.Equal(t, "hello", MustPresent("hello"))
+		format := "missing %s"
+		err := panicError(t, func() {
+			MustPresent("", format, "name")
 		})
+		assert.EqualError(t, err, "missing name")
+	})
+
+	t.Run("default message", func(t *testing.T) {
+		err := panicError(t, func() { MustPresent("") })
+		assert.EqualError(t, err, "value is empty")
 	})
 }
 
-func TestFormatWithErrEmptyMessage(t *testing.T) {
-	assert.Equal(t, errSample.Error(), formatWithErr("", errSample))
+func TestFormatMsgNonString(t *testing.T) {
+	assert.Equal(t, "1 2x", formatMsg("default", 1, 2, "x"))
+}
+
+func panicError(t *testing.T, fn func()) (err error) {
+	t.Helper()
+	defer func() {
+		r := recover()
+		require.NotNil(t, r)
+		var ok bool
+		err, ok = r.(error)
+		require.Truef(t, ok, "panic value should be an error, got %T", r)
+	}()
+	fn()
+	return nil
 }

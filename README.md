@@ -189,34 +189,33 @@ connection must succeed, or a hard dependency cannot be reached. The helpers
 panic with a clear message on failure, or return the value and move on.
 
 ```go
-func Must[T any](value T, err error) T
-func MustMsg[T any](value T, err error, msg string, args ...any) T
-func MustPass(err error, msg string, args ...any)
-func MustPresent[T comparable](value T, msg string, args ...any) T
+func MustGet[T any](value T, err error) T
+func MustPass(err error, msg ...any)
+func MustPresent[T comparable](value T, msg ...any) T
 ```
 
-- **`Must`** — unwraps a `(T, error)` pair. Panics with the original error when
+- **`MustGet`** — unwraps a `(T, error)` pair. Panics with the original error when
   `err != nil`.
-- **`MustMsg`** — like `Must`, but panics with `"<formatted msg>: <err>"`.
-- **`MustPass`** — for error-only calls.
+- **`MustPass`** — for error-only calls. Optional message arguments add context;
+  when present, `msg[0]` is the `fmt.Sprintf` format string and `msg[1:]` are
+  its arguments.
 - **`MustPresent`** — panics when the value is the zero value; otherwise returns
-  it. The value must be `comparable` so the check can use direct `==`.
+  it. The value must be `comparable` so the check can use direct `==`. Optional
+  message arguments follow the same `fmt.Sprintf` convention as `MustPass`.
+
+All `Must*` helpers panic with an `error`, so recovery code can consistently
+inspect `recover()` values as errors.
 
 Examples:
 
 ```go
-db := Must(sql.Open("pgx", dsn))
+db := MustGet(sql.Open("pgx", dsn))
+MustPass(db.PingContext(ctx))
 MustPass(db.PingContext(ctx), "database ping failed")
+format := "database ping failed for %s"
+MustPass(db.PingContext(ctx), format, dsn)
 
 redisHost := MustPresent(os.Getenv("REDIS_HOST"), "REDIS_HOST must not be empty")
-```
-
-Use `MustMsg` when you already have separate `value, err` variables and want
-extra context:
-
-```go
-file, err := os.Open(path)
-file = MustMsg(file, err, "open %q", path)
 ```
 
 For request handlers, library APIs, and recoverable failures, prefer normal Go

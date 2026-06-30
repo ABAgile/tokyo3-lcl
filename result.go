@@ -1,37 +1,44 @@
 package lcl
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
-func Must[T any](value T, err error) T {
+func MustGet[T any](value T, err error) T {
 	if err != nil {
+		MustPass(err)
+	}
+	return value
+}
+
+func MustPass(err error, msg ...any) {
+	if err != nil {
+		if message := formatMsg("", msg...); message != "" {
+			panic(fmt.Errorf("%s: %w", message, err))
+		}
 		panic(err)
 	}
-	return value
 }
 
-func MustMsg[T any](value T, err error, msg string, args ...any) T {
-	if err != nil {
-		panic(formatWithErr(msg, err, args...))
-	}
-	return value
-}
-
-func MustPass(err error, msg string, args ...any) {
-	if err != nil {
-		panic(formatWithErr(msg, err, args...))
-	}
-}
-
-func MustPresent[T comparable](value T, msg string, args ...any) T {
+func MustPresent[T comparable](value T, msg ...any) T {
 	if IsEmpty(value) {
-		panic(fmt.Sprintf(msg, args...))
+		panic(errors.New(formatMsg("value is empty", msg...)))
 	}
 	return value
 }
 
-func formatWithErr(msg string, err error, args ...any) string {
-	if msg == "" {
-		return err.Error()
+func formatMsg(defaultMsg string, msg ...any) string {
+	if len(msg) == 0 {
+		return defaultMsg
 	}
-	return fmt.Sprintf(msg, args...) + ": " + err.Error()
+
+	format, ok := msg[0].(string)
+	if !ok {
+		return fmt.Sprint(msg...)
+	}
+	if len(msg) == 1 {
+		return format
+	}
+	return fmt.Sprintf(format, msg[1:]...)
 }
