@@ -519,6 +519,41 @@ Publish[any](context.Background(), bus, OrderPlaced{OrderID: "ord-123"})
 
 ---
 
+## pipeline.go — Context-aware channel pipelines
+
+`PipeContext` sends initial values into a pipeline input channel. `Pipe`
+transforms values from one channel into another. Each transform receives
+`context.Context`, and the pipeline stops when the input channel closes or the
+context is canceled. Callers should either drain the output channel or cancel the
+context to let the pipeline goroutine exit.
+
+```go
+numbers := PipeContext(ctx, 1, 2, 3)
+
+doubled := Pipe(ctx, numbers, func(ctx context.Context, n int) int {
+    return n * 2
+})
+labels := Pipe(ctx, doubled, func(ctx context.Context, n int) string {
+    return fmt.Sprintf("n=%d", n)
+})
+
+// Drain the final channel to execute the full pipeline.
+for label := range labels {
+    fmt.Println(label)
+}
+```
+
+Use `PipeError` when a transform can fail. It stops at the first error and sends
+that error on a buffered, single-error channel.
+
+```go
+out, errs := PipeError(ctx, jobs, func(ctx context.Context, job Job) (Result, error) {
+    return processJob(ctx, job)
+})
+```
+
+---
+
 ## workerpool.go — Concurrent job processing
 
 Helpers for running work concurrently without managing goroutines directly.
