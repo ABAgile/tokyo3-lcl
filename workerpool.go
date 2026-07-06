@@ -53,10 +53,17 @@ func RunConcurrent[T any](ctx context.Context, jobs []T, workerCount int, fn fun
 	workerCount = normalizeWorkerCount(workerCount)
 	jobCh := make(chan T, workerCount*3) // buffered channel, improves throughput
 	go func() {
+		defer close(jobCh)
 		for _, j := range jobs {
-			jobCh <- j
+			if ctx.Err() != nil {
+				return
+			}
+			select {
+			case jobCh <- j:
+			case <-ctx.Done():
+				return
+			}
 		}
-		close(jobCh)
 	}()
 	handler := func(ctx context.Context, job T, logger *slog.Logger) {
 		fn(ctx, job)
@@ -69,10 +76,17 @@ func MapConcurrent[T any, R any](ctx context.Context, jobs []T, workerCount int,
 	workerCount = normalizeWorkerCount(workerCount)
 	jobCh := make(chan Tuple2[int, T], workerCount*3) // buffered channel, improves throughput
 	go func() {
+		defer close(jobCh)
 		for i, j := range jobs {
-			jobCh <- T2(i, j)
+			if ctx.Err() != nil {
+				return
+			}
+			select {
+			case jobCh <- T2(i, j):
+			case <-ctx.Done():
+				return
+			}
 		}
-		close(jobCh)
 	}()
 	results := make([]R, len(jobs))
 	handler := func(ctx context.Context, job Tuple2[int, T], logger *slog.Logger) {

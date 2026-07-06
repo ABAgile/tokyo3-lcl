@@ -113,6 +113,18 @@ func TestRunConcurrent_AllJobsRun(t *testing.T) {
 	assert.Equal(t, []string{"a", "b", "c", "d", "e"}, seen)
 }
 
+func TestRunConcurrent_CanceledContextStopsFeeding(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var count atomic.Int32
+	RunConcurrent(ctx, []int{1, 2, 3}, 1, func(_ context.Context, _ int) {
+		count.Add(1)
+	})
+
+	assert.Zero(t, count.Load())
+}
+
 // --- MapConcurrent ---
 
 func TestMapConcurrent(t *testing.T) {
@@ -179,6 +191,20 @@ func TestMapConcurrent_PreservesOrder(t *testing.T) {
 	for i, v := range got {
 		assert.Equal(t, i*i, v, "index %d", i)
 	}
+}
+
+func TestMapConcurrent_CanceledContextStopsFeeding(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var count atomic.Int32
+	got := MapConcurrent(ctx, []int{1, 2, 3}, 1, func(_ context.Context, n int) int {
+		count.Add(1)
+		return n * 2
+	})
+
+	assert.Zero(t, count.Load())
+	assert.Equal(t, []int{0, 0, 0}, got)
 }
 
 func TestMapConcurrent_StringTransform(t *testing.T) {
